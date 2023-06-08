@@ -30,10 +30,8 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 
         let html_url = forkee.html_url.unwrap().to_string();
         let time = forkee.created_at.expect("time not found");
-        let forkee_as_user = forkee.owner.unwrap();
 
         let org_url = forkee_as_user.organizations_url;
-        let forkee_login = forkee_as_user.login;
 
         let mut email = "".to_string();
         let mut twitter_handle = "".to_string();
@@ -45,6 +43,18 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
             Ok(user_obj) => {
                 email = user_obj.email.unwrap_or("".to_string());
                 twitter_handle = user_obj.twitter_username.unwrap_or("".to_string());
+            }
+        }
+
+        let starred_route = format!("/repos/{github_owner}/{github_repo}/stargazers");
+        let starred_route = format!("/repos/jaykchen/a-test/stargazers");
+        let response: OctoResult<Vec<StarGazer>> = octocrab.get(&starred_route, None::<&()>).await;
+        match response {
+            Err(_) => {
+                println!("error");
+            }
+            Ok(response) => {
+                println!("{:?}", response[0].login);
             }
         }
 
@@ -75,7 +85,21 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     }
 }
 
-use serde::{Deserialize, Serialize};
+#[derive(Debug, Serialize, Deserialize)]
+struct UserProfile {
+    login: String,
+    html_url: String,
+    followers_url: String,
+    following_url: String,
+    organizations_url: String,
+    blog: String,
+    twitter_username: Option<String>,
+    email: Option<String>,
+    followers: u32,
+    stargazers_count: u32,
+    rank_status: String,
+    influence_status: String,
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct User {
@@ -90,4 +114,22 @@ struct User {
     twitter_username: Option<String>,
     email: Option<String>,
     followers: u32,
+}
+
+pub fn is_top_by_contribution() {
+
+    // https://github.com/search?q=followers%3A%3E1000&type=Users
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct StarGazer {
+    login: String,
+    id: u64,
+    url: String,
+    html_url: String,
+    followers_url: String,
+    following_url: String,
+    starred_url: String,
+    organizations_url: String,
+    repos_url: String,
 }
