@@ -80,6 +80,8 @@ Otherwise, you have to modify the wasmedge toolchain and call this function inst
         );
 
         if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
+            send_message_to_channel("ik8", "ch_out", res.choice.clone()).await;
+
             let assistant_obj = serde_json::json!(
                 {"role": "assistant", "content": &res.choice}
             );
