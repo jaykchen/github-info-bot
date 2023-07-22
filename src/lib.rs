@@ -25,7 +25,7 @@ pub async fn run() {
 }
 
 async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
-    let trigger_phrase = env::var("trigger_phrase").unwrap_or("bot@get".to_string());
+    let trigger_word = env::var("trigger_word").unwrap_or("bot@get".to_string());
     // let github_owner = env::var("github_owner").unwrap_or("WasmEdge".to_string());
     // let github_repo = env::var("github_repo").unwrap_or("WasmEdge".to_string());
 
@@ -43,7 +43,10 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     };
 
     let mut out = String::from("placeholder");
-    if sm.text.contains(&trigger_phrase) {
+    if sm.text.contains(&trigger_word) {
+        let text = format!("User: {} \n Github owner {} \n Github repo {} \n", user_name, github_owner, github_repo);
+        send_message_to_channel("ik8", "ch_err", text).await;
+
         let openai = OpenAIFlows::new();
 
         let sys_prompt_1 = &format!("Given the information that user '2019zhou' opened an issue titled 'asking for guidance on how to open the debug log for a specific function', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
@@ -80,7 +83,8 @@ Otherwise, you have to modify the wasmedge toolchain and call this function inst
         );
 
         if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
-            send_message_to_channel("ik8", "ch_out", res.choice.clone()).await;
+
+            send_message_to_channel("ik8", "ch_in", res.choice.clone()).await;
 
             let assistant_obj = serde_json::json!(
                 {"role": "assistant", "content": &res.choice}
