@@ -48,19 +48,20 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 
     let mut out = String::from("placeholder");
     if sm.text.contains(&trigger_word) {
-        let openai = OpenAIFlows::new();
 
-        let mut issues_summaries = String::new();
+        // let mut issues_summaries = String::new();
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             
             for issue in issues {
-                if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
-                    send_message_to_channel("ik8", "ch_in", body.to_string()).await;
-                    issues_summaries.push_str(&body);
-                    issues_summaries.push_str("\n");
-                }
+                            send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+
+                // if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
+                //     send_message_to_channel("ik8", "ch_in", body.to_string()).await;
+                //     issues_summaries.push_str(&body);
+                //     issues_summaries.push_str("\n");
+                // }
             }
-            send_message_to_channel("ik8", "ch_out", issues_summaries).await;
+            // send_message_to_channel("ik8", "ch_out", issues_summaries).await;
         }
     }
 }
