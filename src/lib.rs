@@ -42,7 +42,15 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         .collect();
 
     let (owner, repo, user_name) = match parts.as_slice() {
-        [owner, repo, user, ..] => (owner, repo, user),
+        [owner, repo, user, ..] => {
+            send_message_to_channel(
+                "ik8",
+                "ch_in",
+                format!("{} {} {}", owner, repo, user),
+            )
+            .await;
+            (owner, repo, user)
+        }
         _ => panic!("Input should contain 'bot@get <github_owner> <github_repo> <user_name>'"),
     };
 
@@ -76,8 +84,12 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
         .send()
         .await?;
 
-
-    send_message_to_channel("ik8", "ch_in", page.number_of_pages().unwrap_or(88).to_string()).await;
+    send_message_to_channel(
+        "ik8",
+        "ch_in",
+        page.number_of_pages().unwrap_or(88).to_string(),
+    )
+    .await;
 
     let mut res = vec![];
     for issue in page.items {
