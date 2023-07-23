@@ -1,4 +1,5 @@
 use anyhow::Result;
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
 use github_flows::{
     get_octo, octocrab,
@@ -10,7 +11,6 @@ use openai_flows::{
     chat::{self, ChatMessage, ChatModel, ChatOptions},
     OpenAIFlows,
 };
-use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slack_flows::{listen_to_channel, send_message_to_channel, SlackMessage};
@@ -48,12 +48,10 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 
     let mut out = String::from("placeholder");
     if sm.text.contains(&trigger_word) {
-
         // let mut issues_summaries = String::new();
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
-            
             for issue in issues {
-                            send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+                send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
 
                 // if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
                 //     send_message_to_channel("ik8", "ch_in", body.to_string()).await;
@@ -78,11 +76,13 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
         .send()
         .await?;
 
+
+    send_message_to_channel("ik8", "ch_in", page.number_of_pages().unwrap_or(88).to_string()).await;
+
     let mut res = vec![];
     for issue in page.items {
         res.push(issue.clone());
         send_message_to_channel("ik8", "ch_err", issue.clone().html_url.to_string()).await;
-
     }
     Ok(res)
 }
