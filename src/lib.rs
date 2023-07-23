@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slack_flows::{listen_to_channel, send_message_to_channel, SlackMessage};
 use std::env;
+use urlencoding;
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -50,7 +51,6 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     let mut out = String::from("placeholder");
     if sm.text.contains(&trigger_word) {
         // let mut issues_summaries = String::new();
-        send_message_to_channel("ik8", "ch_in", "I'm inside loop".to_string()).await;
 
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
@@ -70,13 +70,10 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
 
-    let user_issue_search_str = format!("repo:{owner}/{repo} involves:{user}");
-
     let url_str = format!(
-        "https://api.github.com/search/issues?q={}&sort=created&order=desc",
-        user_issue_search_str
+        "https://api.github.com/search/issues?q=repo:{owner}/{repo} involves:{user}&sort=created&order=desc"
     );
-
+  let  url_str = urlencoding::encode(&url_str).to_string();
     let url = Uri::try_from(url_str.as_str()).unwrap();
     let mut writer = Vec::new();
     let mut out: Vec<Issue> = vec![];
@@ -105,8 +102,12 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
                 Ok(search_result) => {
                     for issue in search_result {
                         out.push(issue.clone());
-                        send_message_to_channel("ik8", "ch_err", issue.clone().html_url.to_string())
-                            .await;
+                        send_message_to_channel(
+                            "ik8",
+                            "ch_err",
+                            issue.clone().html_url.to_string(),
+                        )
+                        .await;
                     }
                 }
             }
