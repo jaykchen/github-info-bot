@@ -18,3 +18,4 @@ serde = { version = "1.0.163", features = ["derive"] }
 openai-flows = "0.8.5"
 http_req_wasi = {version = "0.10", features = ["wasmedge_ssl"]}
 chrono = "0.4.26"
+log = "0.4.19"
