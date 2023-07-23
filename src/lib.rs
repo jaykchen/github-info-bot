@@ -71,8 +71,8 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
     let page = octocrab
         .search()
         .issues_and_pull_requests(&user_issue_search_str)
-        .sort("created")
-        .order("desc")
+        // .sort("created")
+        // .order("desc")
         .send()
         .await?;
 
