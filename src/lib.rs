@@ -239,7 +239,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             );
             let sys_prompt_2 =
                 serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-            let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, and the role and contribution of '{user}'");
+            let usr_prompt_2 = &format!("Provide a brief summary highlighting the core problem and emphasize the overarching contribution made by '{user}' to the resolution of this issue, ensuring your response stays under 128 tokens.");
 
             let co_2 = ChatOptions {
                 model: ChatModel::GPT35Turbo16K,
