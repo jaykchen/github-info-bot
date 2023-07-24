@@ -1,6 +1,7 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
+use flowsnet_platform_sdk::logger;
 use github_flows::{
     get_octo, octocrab,
     octocrab::{
@@ -24,6 +25,7 @@ use urlencoding;
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
 pub async fn run() {
+    logger::init();
     dotenv().ok();
 
     let slack_workspace = env::var("slack_workspace").unwrap_or("secondstate".to_string());
@@ -177,14 +179,14 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         .send(&mut writer)
     {
         Ok(res) => {
-            if !res.status_code().is_success() {};
+            if !res.status_code().is_success() {
+                log::error!("Github http error {:?}", res.status_code());
+            };
 
             let response: Result<Vec<Comment>, _> = serde_json::from_slice(&writer);
 
             match response {
-                Err(_e) => {
-                    send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
-                }
+                Err(_e) => log::error!("Github response parse error {:?}", _e),
 
                 Ok(comments) => {
                     for comment in comments {
@@ -204,9 +206,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
                 }
             }
         }
-        Err(_e) => {
-            send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
-        }
+        Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
     }
 
     let mut out = issue_date;
@@ -214,15 +214,13 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
     let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
     let chat_id = format!("issue_{issue_number}");
 
-    send_message_to_channel("ik8", "ch_in", usr_prompt_1.clone()).await;
-
     let input_length_check_1 = sys_prompt_1.len() + usr_prompt_1.len() + 1200;
     let model_1 = match input_length_check_1 > 30_000 {
         true => ChatModel::GPT35Turbo16K,
-        false => ChatModel::GPT35Turbo16K,
+        false => ChatModel::GPT35Turbo,
     };
     let co_1 = ChatOptions {
-        model: ChatModel::GPT35Turbo16K,
+        model: model_1,
         restart: true,
         system_prompt: Some(sys_prompt_1),
         max_tokens: Some(256),
@@ -251,10 +249,10 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
             let model_2 = match input_length_check_2 > 30_000 {
                 true => ChatModel::GPT35Turbo16K,
-                false => ChatModel::GPT35Turbo16K,
+                false => ChatModel::GPT35Turbo,
             };
             let co_2 = ChatOptions {
-                model: ChatModel::GPT35Turbo16K,
+                model: model_2,
                 restart: true,
                 system_prompt: Some(&sys_prompt_2),
                 max_tokens: Some(128),
@@ -274,14 +272,12 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
                     out.push_str(&res_2.choice);
                     println!("{:?}", out);
                 }
-                Err(_e) => {
-                    send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
-                }
+                Err(_e) => log::error!("Step 2 GPT error {:?}", _e),
+
             };
         }
-        Err(_e) => {
-            send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
-        }
+        Err(_e) => log::error!("Step 1 GPT error {:?}", _e),
+
     }
 
     Some(out)
