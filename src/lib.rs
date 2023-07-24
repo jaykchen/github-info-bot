@@ -215,7 +215,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         false => ChatModel::GPT35Turbo,
     };
     let co_1 = ChatOptions {
-        model: model_1,
+        model: ChatModel::GPT4,
         restart: true,
         system_prompt: Some(sys_prompt_1),
         max_tokens: Some(256),
@@ -245,7 +245,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             false => ChatModel::GPT35Turbo,
         };
         let co_2 = ChatOptions {
-            model: model_2,
+            model: ChatModel::GPT4,
             restart: true,
             system_prompt: Some(&sys_prompt_2),
             max_tokens: Some(128),
