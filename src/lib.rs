@@ -54,10 +54,10 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         let mut output = String::new();
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                // send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+                send_message_to_channel("ik8", "ch_err", issue.html_url.to_string()).await;
 
                 if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
-                    send_message_to_channel("ik8", "ch_in", body.to_string()).await;
+                    // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
                     break;
                     // issues_summaries.push_str(&body);
                     // issues_summaries.push_str("\n");
@@ -191,8 +191,6 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
                     let commenter_input = format!("{commenter} commented: {comment_body}");
                     all_text_from_issue.push_str(&commenter_input);
-                    let head = all_text_from_issue.chars().take(100).collect::<String>();
-                    send_message_to_channel("ik8", "ch_mid", head).await;
 
                     if all_text_from_issue.len() > 55_000 {
                         break;
@@ -203,6 +201,8 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             Err(_e) => continue,
         }
     }
+    let head = all_text_from_issue.chars().take(100).collect::<String>();
+    send_message_to_channel("ik8", "ch_in", head).await;
 
     let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
@@ -212,10 +212,10 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
     let input_length_check_1 = sys_prompt_1.len() + usr_prompt_1.len() + 1200;
     let model_1 = match input_length_check_1 > 30_000 {
         true => ChatModel::GPT35Turbo16K,
-        false => ChatModel::GPT35Turbo,
+        false => ChatModel::GPT35Turbo16K,
     };
     let co_1 = ChatOptions {
-        model: ChatModel::GPT4,
+        model: ChatModel::GPT35Turbo16K,
         restart: true,
         system_prompt: Some(sys_prompt_1),
         max_tokens: Some(256),
@@ -224,7 +224,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
     };
 
     if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
-        send_message_to_channel("ik8", "ch_in", res.choice.clone()).await;
+        send_message_to_channel("ik8", "ch_mid", res.choice.clone()).await;
 
         let system_obj_1 = serde_json::json!(
             {"role": "system", "content": sys_prompt_1}
@@ -242,10 +242,10 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
         let model_2 = match input_length_check_2 > 30_000 {
             true => ChatModel::GPT35Turbo16K,
-            false => ChatModel::GPT35Turbo,
+            false => ChatModel::GPT35Turbo16K,
         };
         let co_2 = ChatOptions {
-            model: ChatModel::GPT4,
+            model: ChatModel::GPT35Turbo16K,
             restart: true,
             system_prompt: Some(&sys_prompt_2),
             max_tokens: Some(128),
@@ -253,6 +253,8 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             ..Default::default()
         };
         if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
+            send_message_to_channel("ik8", "ch_out", res.choice.clone()).await;
+
             if res.choice.len() < 10 {
                 return None;
             }
