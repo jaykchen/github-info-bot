@@ -87,6 +87,8 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
     let mut out: Vec<Issue> = vec![];
 
     for page in 1.. {
+        send_message_to_channel("ik8", "ch_in", page.to_string()).await;
+
         let url_str = format!(
             "https://api.github.com/search/issues?q={encoded_query}&sort=created&order=desc&page={page}"
         );
@@ -98,7 +100,7 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
             .method(Method::GET)
             .header("User-Agent", "flows-network connector")
             .header("Content-Type", "application/vnd.github.v3+json")
-            .header("Authorization", &format!("token {github_token}")) // add the token to your request
+            .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
             .send(&mut writer)
         {
             Ok(res) => {
