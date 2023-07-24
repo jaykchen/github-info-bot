@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
 use github_flows::{
     get_octo, octocrab,
-    octocrab::{models::issues::Issue, Result as OctoResult},
+    octocrab::{models::issues::Issue, Page, Result as OctoResult},
     GithubLogin,
 };
 use http_req::{request::Method, request::Request, uri::Uri};
@@ -66,88 +66,88 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         }
     }
 }
-#[derive(Debug, Deserialize)]
-struct Page<T> {
-    pub items: Vec<T>,
-    pub incomplete_results: Option<bool>,
-    pub total_count: Option<u64>,
-    pub next: Option<String>,
-    pub prev: Option<String>,
-    pub first: Option<String>,
-    pub last: Option<String>,
-}
-pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
-    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
-
-    let query = format!("repo:{}/{} involves:{}", owner, repo, user);
-    let encoded_query = urlencoding::encode(&query);
-    let url_str = format!(
-        "https://api.github.com/search/issues?q={}&sort=created&order=desc",
-        encoded_query
-    );
-    let url = Uri::try_from(url_str.as_str()).unwrap();
-    let mut writer = Vec::new();
-    let mut out: Vec<Issue> = vec![];
-
-    match Request::new(&url)
-        .method(Method::GET)
-        .header("User-Agent", "flows-network connector")
-        .header("Content-Type", "application/vnd.github.v3+json")
-        .header("Authorization", &format!("token {github_token}")) // add the token to your request
-        .send(&mut writer)
-    {
-        Ok(res) => {
-            if !res.status_code().is_success() {
-                return Err(anyhow::anyhow!("Request to Github API failed."));
-            };
-
-            let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
-
-            match response {
-                Err(_e) => {
-                    return Err(anyhow::anyhow!("Failed to parse Github API response."));
-                }
-
-                Ok(search_result) => {
-                    for issue in search_result.items {
-                        out.push(issue.clone());
-                    }
-                }
-            }
-        }
-        Err(_e) => {
-            return Err(anyhow::anyhow!("Failed to send request to Github API."));
-        }
-    }
-
-    Ok(out)
-}
-// pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
-//     let octocrab = get_octo(&GithubLogin::Default);
-
-//     let user_issue_search_str = format!("repo:{owner}/{repo} involves:{user}");
-//     let page = octocrab
-//         .search()
-//         .issues_and_pull_requests(&user_issue_search_str)
-//         // .sort("created")
-//         // .order("desc")
-//         .send()
-//         .await?;
-
-//     send_message_to_channel(
-//         "ik8",
-//         "ch_in",
-//         page.number_of_pages().unwrap_or(88).to_string(),
-//     )
-//     .await;
-
-//     let mut res = vec![];
-//     for issue in page.items {
-//         res.push(issue.clone());
-//         send_message_to_channel("ik8", "ch_err", issue.clone().html_url.to_string()).await;
-//     }
-//     Ok(res)
+// #[derive(Debug, Deserialize)]
+// struct Page<T> {
+//     pub items: Vec<T>,
+//     pub incomplete_results: Option<bool>,
+//     pub total_count: Option<u64>,
+//     pub next: Option<String>,
+//     pub prev: Option<String>,
+//     pub first: Option<String>,
+//     pub last: Option<String>,
 // }
+// pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
+//     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
+
+//     let query = format!("repo:{}/{} involves:{}", owner, repo, user);
+//     let encoded_query = urlencoding::encode(&query);
+//     let url_str = format!(
+//         "https://api.github.com/search/issues?q={}&sort=created&order=desc",
+//         encoded_query
+//     );
+//     let url = Uri::try_from(url_str.as_str()).unwrap();
+//     let mut writer = Vec::new();
+//     let mut out: Vec<Issue> = vec![];
+
+//     match Request::new(&url)
+//         .method(Method::GET)
+//         .header("User-Agent", "flows-network connector")
+//         .header("Content-Type", "application/vnd.github.v3+json")
+//         .header("Authorization", &format!("token {github_token}")) // add the token to your request
+//         .send(&mut writer)
+//     {
+//         Ok(res) => {
+//             if !res.status_code().is_success() {
+//                 return Err(anyhow::anyhow!("Request to Github API failed."));
+//             };
+
+//             let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
+
+//             match response {
+//                 Err(_e) => {
+//                     return Err(anyhow::anyhow!("Failed to parse Github API response."));
+//                 }
+
+//                 Ok(search_result) => {
+//                     for issue in search_result.items {
+//                         out.push(issue.clone());
+//                     }
+//                 }
+//             }
+//         }
+//         Err(_e) => {
+//             return Err(anyhow::anyhow!("Failed to send request to Github API."));
+//         }
+//     }
+
+//     Ok(out)
+// }
+pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
+    let octocrab = get_octo(&GithubLogin::Default);
+
+    let user_issue_search_str = format!("repo:{owner}/{repo} involves:{user}");
+    let page: Page<Issue> = octocrab
+        .search()
+        .issues_and_pull_requests(&user_issue_search_str)
+        .sort("created")
+        .order("desc")
+        .send()
+        .await?;
+
+    send_message_to_channel(
+        "ik8",
+        "ch_in",
+        page.number_of_pages().unwrap_or(88).to_string(),
+    )
+    .await;
+
+    let mut res = vec![];
+    for issue in page.items {
+        res.push(issue.clone());
+        send_message_to_channel("ik8", "ch_err", issue.clone().html_url.to_string()).await;
+    }
+    Ok(res)
+}
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
     let openai = OpenAIFlows::new();
