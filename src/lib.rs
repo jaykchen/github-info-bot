@@ -253,7 +253,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             };
             let co_2 = ChatOptions {
                 model: model_2,
-                restart: true,
+                restart: false,
                 system_prompt: Some(&sys_prompt_2),
                 max_tokens: Some(128),
                 temperature: Some(0.7),
