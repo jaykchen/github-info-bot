@@ -51,11 +51,11 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     let mut out = String::from("placeholder");
     if sm.text.contains(&trigger_word) {
         // let mut issues_summaries = String::new();
-      let mut output = String::new();
-      let mut count=    0;
+        let mut output = String::new();
+        let mut count = 0;
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                count +=1;
+                count += 1;
                 output = issue.title;
                 // send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
 
@@ -65,7 +65,8 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
                 //     // issues_summaries.push_str("\n");
                 // }
             }
-            send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}")).await;
+            send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}"))
+                .await;
         }
     }
 }
@@ -85,8 +86,11 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
     let encoded_query = urlencoding::encode(&query);
 
     let mut out: Vec<Issue> = vec![];
-
-    for page in 1.. {
+    let mut total_pages = None;
+    for page in 1..29 {
+        if page > total_pages.unwrap_or(28) {
+            break;
+        }
         send_message_to_channel("ik8", "ch_in", page.to_string()).await;
 
         let url_str = format!(
@@ -116,6 +120,12 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
                     }
 
                     Ok(search_result) => {
+                        if total_pages.is_none() {
+                            if let Some(count) = search_result.total_count {
+                                total_pages = Some((count / 30) as usize + 1);
+                            }
+                        }
+
                         for issue in search_result.items {
                             out.push(issue.clone());
                         }
