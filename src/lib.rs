@@ -162,74 +162,57 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
     let mut all_text_from_issue = format!("User '{issue_creator_name}', has submitted an issue titled '{issue_title}', labeled as '{labels}', with the following post: '{issue_body}'.");
 
-    let mut total_pages = None;
-    for page_number in 1..=3 {
-        if page_number > total_pages.unwrap_or(3) {
-            break;
-        }
-        let url_str = format!(
-            "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments?page={page_number}",
-        );
+    let url_str = format!(
+        "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments?per_page=100",
+    );
 
-        let url = Uri::try_from(url_str.as_str()).unwrap();
-        let mut writer = Vec::new();
+    let url = Uri::try_from(url_str.as_str()).unwrap();
+    let mut writer = Vec::new();
 
-        match Request::new(&url)
-            .method(Method::GET)
-            .header("User-Agent", "flows-network connector")
-            .header("Content-Type", "application/vnd.github.v3+json")
-            .header("Authorization", &format!("Bearer {}", github_token))
-            .send(&mut writer)
-        {
-            Ok(res) => {
-                if !res.status_code().is_success() {
-                    continue;
-                };
+    match Request::new(&url)
+        .method(Method::GET)
+        .header("User-Agent", "flows-network connector")
+        .header("Content-Type", "application/vnd.github.v3+json")
+        .header("Authorization", &format!("Bearer {}", github_token))
+        .send(&mut writer)
+    {
+        Ok(res) => {
+            if !res.status_code().is_success() {};
 
-                let response: Result<Page<Comment>, _> = serde_json::from_slice(&writer);
+            let response: Result<Vec<Comment>, _> = serde_json::from_slice(&writer);
 
-                match response {
-                    Err(_e) => {
-                        send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+            match response {
+                Err(_e) => {
+                    send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+                }
 
-                        continue;
-                    }
+                Ok(comments) => {
+                    for comment in comments {
+                        let comment_body = match comment.body {
+                            Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
+                            None => "".to_string(),
+                        };
+                        let commenter = comment.user.login;
 
-                    Ok(page) => {
-                        if total_pages.is_none() {
-                            if let Some(count) = page.total_count {
-                                total_pages = Some((count / 30) as usize + 1);
-                            }
-                        }
-                        for comment in page.items {
-                            let comment_body = match comment.body {
-                                Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
-                                None => "".to_string(),
-                            };
-                            let commenter = comment.user.login;
+                        let commenter_input = format!("{commenter} commented: {comment_body}");
+                        all_text_from_issue.push_str(&commenter_input);
 
-                            let commenter_input = format!("{commenter} commented: {comment_body}");
-                            all_text_from_issue.push_str(&commenter_input);
-
-                            if all_text_from_issue.len() > 55_000 {
-                                break;
-                            }
+                        if all_text_from_issue.len() > 55_000 {
+                            break;
                         }
                     }
                 }
             }
-            Err(_e) => {
-                send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
-
-                continue;
-            }
+        }
+        Err(_e) => {
+            send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
         }
     }
 
     let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
     let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
-    let chat_id = format!("issue_{:?}", issue.id);
+    let chat_id = format!("issue_{issue_number}");
 
     send_message_to_channel("ik8", "ch_in", usr_prompt_1.clone()).await;
 
