@@ -126,25 +126,16 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
     let octocrab = get_octo(&GithubLogin::Default);
 
     let user_issue_search_str = format!("repo:{owner}/{repo} involves:{user}");
-    let page: Page<Issue> = octocrab
-        .search()
-        .issues_and_pull_requests(&user_issue_search_str)
-        .sort("created")
-        .order("desc")
-        .send()
-        .await?;
 
-    send_message_to_channel(
-        "ik8",
-        "ch_in",
-        page.number_of_pages().unwrap_or(88).to_string(),
-    )
-    .await;
+    let query = format!("repo:{}/{} involves:{}", owner, repo, user);
+    let encoded_query = urlencoding::encode(&query);
+    let route_str = format!("search/issues?q={encoded_query}&sort=created&order=desc",);
+
+    let page: Page<Issue> = octocrab.get(route_str.as_str(), None::<&()>).await?;
 
     let mut res = vec![];
     for issue in page.items {
         res.push(issue.clone());
-        send_message_to_channel("ik8", "ch_err", issue.clone().html_url.to_string()).await;
     }
     Ok(res)
 }
