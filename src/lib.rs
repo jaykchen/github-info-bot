@@ -3,7 +3,10 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
 use github_flows::{
     get_octo, octocrab,
-    octocrab::{models::issues::Issue, Result as OctoResult},
+    octocrab::{
+        models::issues::{Comment, Issue},
+         Result as OctoResult,
+    },
     GithubLogin,
 };
 use http_req::{request::Method, request::Request, uri::Uri};
@@ -140,8 +143,7 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
     let openai = OpenAIFlows::new();
-    let octocrab = get_octo(&GithubLogin::Default);
-    let issues_handle = octocrab.issues(owner, repo);
+    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
 
     let issue_creator_name = issue.user.login;
     let issue_number = issue.number;
@@ -167,40 +169,61 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         if page_number > total_pages.unwrap_or(3) {
             break;
         }
+        let url_str = format!(
+            "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments?page={page_number}",
+        );
 
-        match issues_handle
-            .list_comments(issue_number)
-            // .since(chrono::Utc::now())
-            .per_page(30)
-            .page(page_number as u32)
-            .send()
-            .await
+        let url = Uri::try_from(url_str.as_str()).unwrap();
+        let mut writer = Vec::new();
+
+        match Request::new(&url)
+            .method(Method::GET)
+            .header("User-Agent", "flows-network connector")
+            .header("Content-Type", "application/vnd.github.v3+json")
+            .header("Authorization", &format!("Bearer {}", github_token))
+            .send(&mut writer)
         {
-            Ok(pages) => {
-                if total_pages.is_none() {
-                    if let Some(count) = pages.total_count {
-                        total_pages = Some((count / 30) as usize + 1);
+            Ok(res) => {
+                if !res.status_code().is_success() {
+                    continue;
+                };
+
+                let response: Result<Page<Comment>, _> = serde_json::from_slice(&writer);
+
+                match response {
+                    Err(_e) => {
+                        continue;
                     }
-                }
-                for comment in pages.items {
-                    let comment_body = match comment.body {
-                        Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
-                        None => "".to_string(),
-                    };
-                    let commenter = comment.user.login;
 
-                    let commenter_input = format!("{commenter} commented: {comment_body}");
-                    all_text_from_issue.push_str(&commenter_input);
+                    Ok(page) => {
+                        if total_pages.is_none() {
+                            if let Some(count) = page.total_count {
+                                total_pages = Some((count / 30) as usize + 1);
+                            }
+                        }
+                        for comment in page.items {
+                            let comment_body = match comment.body {
+                                Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
+                                None => "".to_string(),
+                            };
+                            let commenter = comment.user.login;
 
-                    if all_text_from_issue.len() > 55_000 {
-                        break;
+                            let commenter_input = format!("{commenter} commented: {comment_body}");
+                            all_text_from_issue.push_str(&commenter_input);
+
+                            if all_text_from_issue.len() > 55_000 {
+                                break;
+                            }
+                        }
                     }
                 }
             }
-
-            Err(_e) => continue,
+            Err(_e) => {
+                continue;
+            }
         }
     }
+
     let head = all_text_from_issue.chars().take(100).collect::<String>();
     send_message_to_channel("ik8", "ch_in", head).await;
 
