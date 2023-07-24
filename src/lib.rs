@@ -66,14 +66,25 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         }
     }
 }
-
+#[derive(Debug, Deserialize)]
+struct Page<T> {
+    pub items: Vec<T>,
+    pub incomplete_results: Option<bool>,
+    pub total_count: Option<u64>,
+    pub next: Option<String>,
+    pub prev: Option<String>,
+    pub first: Option<String>,
+    pub last: Option<String>,
+}
 pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
 
+    let query = format!("repo:{}/{} involves:{}", owner, repo, user);
+    let encoded_query = urlencoding::encode(&query);
     let url_str = format!(
-        "https://api.github.com/search/issues?q=repo:{owner}/{repo} involves:{user}&sort=created&order=desc"
+        "https://api.github.com/search/issues?q={}&sort=created&order=desc",
+        encoded_query
     );
-  let  url_str = urlencoding::encode(&url_str).to_string();
     let url = Uri::try_from(url_str.as_str()).unwrap();
     let mut writer = Vec::new();
     let mut out: Vec<Issue> = vec![];
@@ -82,38 +93,29 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
         .method(Method::GET)
         .header("User-Agent", "flows-network connector")
         .header("Content-Type", "application/vnd.github.v3+json")
-        .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
+        .header("Authorization", &format!("token {github_token}")) // add the token to your request
         .send(&mut writer)
     {
         Ok(res) => {
             if !res.status_code().is_success() {
-                log::debug!("Error sending request: {:?}", res.status_code());
                 return Err(anyhow::anyhow!("Request to Github API failed."));
             };
 
-            let response: Result<Vec<Issue>, _> = serde_json::from_slice(&writer);
+            let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
 
             match response {
                 Err(_e) => {
-                    log::debug!("Error parsing response: {:?}", _e.to_string());
                     return Err(anyhow::anyhow!("Failed to parse Github API response."));
                 }
 
                 Ok(search_result) => {
-                    for issue in search_result {
+                    for issue in search_result.items {
                         out.push(issue.clone());
-                        send_message_to_channel(
-                            "ik8",
-                            "ch_err",
-                            issue.clone().html_url.to_string(),
-                        )
-                        .await;
                     }
                 }
             }
         }
         Err(_e) => {
-            log::debug!("Error getting response from GitHub: {:?}", _e.to_string());
             return Err(anyhow::anyhow!("Failed to send request to Github API."));
         }
     }
