@@ -5,7 +5,7 @@ use github_flows::{
     get_octo, octocrab,
     octocrab::{
         models::issues::{Comment, Issue},
-         Result as OctoResult,
+        Result as OctoResult,
     },
     GithubLogin,
 };
@@ -57,8 +57,6 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         let mut output = String::new();
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                send_message_to_channel("ik8", "ch_err", issue.html_url.to_string()).await;
-
                 if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
                     // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
                     break;
@@ -224,13 +222,12 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         }
     }
 
-    let head = all_text_from_issue.chars().take(100).collect::<String>();
-    send_message_to_channel("ik8", "ch_in", head).await;
-
     let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
     let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
     let chat_id = format!("issue_{:?}", issue.id);
+
+    send_message_to_channel("ik8", "ch_in", usr_prompt_1.clone()).await;
 
     let input_length_check_1 = sys_prompt_1.len() + usr_prompt_1.len() + 1200;
     let model_1 = match input_length_check_1 > 30_000 {
@@ -246,48 +243,60 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         ..Default::default()
     };
 
-    if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
-        send_message_to_channel("ik8", "ch_mid", res.choice.clone()).await;
+    match openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
+        Ok(res_1) => {
+            send_message_to_channel("ik8", "ch_mid", res_1.choice.clone()).await;
 
-        let system_obj_1 = serde_json::json!(
-            {"role": "system", "content": sys_prompt_1}
-        );
+            let system_obj_1 = serde_json::json!(
+                {"role": "system", "content": sys_prompt_1}
+            );
 
-        let user_obj_1 = serde_json::json!(
-            {"role": "user", "content": usr_prompt_1}
-        );
-        let assistant_obj = serde_json::json!(
-            {"role": "assistant", "content": &res.choice}
-        );
-        let sys_prompt_2 = serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-        let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, steps taken, discussions, and current status of the issue>. Highlight the role and contribution of '{user}'");
+            let user_obj_1 = serde_json::json!(
+                {"role": "user", "content": usr_prompt_1}
+            );
+            let assistant_obj = serde_json::json!(
+                {"role": "assistant", "content": &res_1.choice}
+            );
+            let sys_prompt_2 =
+                serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
+            let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, steps taken, discussions, and current status of the issue>. Highlight the role and contribution of '{user}'");
 
-        let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
-        let model_2 = match input_length_check_2 > 30_000 {
-            true => ChatModel::GPT35Turbo16K,
-            false => ChatModel::GPT35Turbo16K,
-        };
-        let co_2 = ChatOptions {
-            model: ChatModel::GPT35Turbo16K,
-            restart: true,
-            system_prompt: Some(&sys_prompt_2),
-            max_tokens: Some(128),
-            temperature: Some(0.7),
-            ..Default::default()
-        };
-        if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
-            send_message_to_channel("ik8", "ch_out", res.choice.clone()).await;
+            let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
+            let model_2 = match input_length_check_2 > 30_000 {
+                true => ChatModel::GPT35Turbo16K,
+                false => ChatModel::GPT35Turbo16K,
+            };
+            let co_2 = ChatOptions {
+                model: ChatModel::GPT35Turbo16K,
+                restart: true,
+                system_prompt: Some(&sys_prompt_2),
+                max_tokens: Some(128),
+                temperature: Some(0.7),
+                ..Default::default()
+            };
+            match openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
+                Ok(res_2) => {
+                    send_message_to_channel("ik8", "ch_out", res_2.choice.clone()).await;
 
-            if res.choice.len() < 10 {
-                return None;
-            }
-            out.push(' ');
-            out.push_str(&html_url);
-            out.push(' ');
-            out.push_str(&res.choice);
-            println!("{:?}", out);
-        };
+                    if res_2.choice.len() < 10 {
+                        return None;
+                    }
+                    out.push(' ');
+                    out.push_str(&html_url);
+                    out.push(' ');
+                    out.push_str(&res_2.choice);
+                    println!("{:?}", out);
+                }
+                Err(_e) => {
+                    send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+                }
+            };
+        }
+        Err(_e) => {
+            send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+        }
     }
+
     Some(out)
 }
 
