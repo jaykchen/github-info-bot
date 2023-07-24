@@ -57,18 +57,20 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     if sm.text.contains(&trigger_word) {
         // let mut issues_summaries = String::new();
         let mut output = String::new();
-        if let Ok(issues) = get_issues(owner, repo, user_name).await {
-            for issue in issues {
-                if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
-                    // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
-                    break;
-                    // issues_summaries.push_str(&body);
-                    // issues_summaries.push_str("\n");
-                }
-            }
-            // send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}"))
-            //     .await;
+
+        if let Ok(res) = analyze_commits(owner, repo, user_name).await {
+            send_message_to_channel("ik8", "ch_out", res.clone()).await;
         }
+        // if let Ok(issues) = get_issues(owner, repo, user_name).await {
+        //     for issue in issues {
+        //         if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
+        //             // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
+        //             break;
+        //             // issues_summaries.push_str(&body);
+        //             // issues_summaries.push_str("\n");
+        //         }
+        //     }
+        // }
     }
 }
 #[derive(Debug, Deserialize)]
@@ -225,8 +227,6 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
     match openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
         Ok(res_1) => {
-            send_message_to_channel("ik8", "ch_mid", res_1.choice.clone()).await;
-
             let system_obj_1 = serde_json::json!(
                 {"role": "system", "content": sys_prompt_1}
             );
@@ -251,7 +251,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             };
             match openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
                 Ok(res_2) => {
-                    send_message_to_channel("ik8", "ch_out", res_2.choice.clone()).await;
+                    send_message_to_channel("ik8", "ch_mid", res_2.choice.clone()).await;
 
                     if res_2.choice.len() < 10 {
                         return None;
@@ -263,11 +263,9 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
                     println!("{:?}", out);
                 }
                 Err(_e) => log::error!("Step 2 GPT error {:?}", _e),
-
             };
         }
         Err(_e) => log::error!("Step 1 GPT error {:?}", _e),
-
     }
 
     Some(out)
@@ -326,4 +324,139 @@ pub fn squeeze_fit_comment_texts(
             body_text_vec.join(" ")
         }
     }
+}
+
+pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow::Result<String> {
+    let octocrab = get_octo(&GithubLogin::Default);
+    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
+    let openai = OpenAIFlows::new();
+    let user_commits_repo_str =
+        format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
+    let page: Vec<GithubCommit> = octocrab.get(user_commits_repo_str, None::<&()>).await?;
+    let shas = page.iter().map(|x| x.sha.clone()).collect::<Vec<String>>();
+
+    let mut commit_summaries = Vec::<String>::new();
+
+    for sha in shas {
+        let commit_patch_str = format!("https://github.com/{owner}/{repo}/commit/{sha}.patch");
+
+        let uri = Uri::try_from(commit_patch_str.as_str()).unwrap();
+        let mut writer = Vec::new();
+
+        let mut text = String::new();
+        match Request::new(&uri)
+            .method(Method::GET)
+            .header("User-Agent", "flows-network connector")
+            .header("Content-Type", "application/vnd.github.v3+json")
+            .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
+            .send(&mut writer)
+        {
+            Ok(res) => {
+                if !res.status_code().is_success() {
+                    log::error!("Github http error {:?}", res.status_code());
+                };
+
+                let response: Result<String, _> = serde_json::from_slice(&writer);
+
+                match response {
+                    Err(_e) => log::error!("Github response parse error {:?}", _e),
+
+                    Ok(commit) => text = commit,
+                }
+            }
+            Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
+        }
+
+        let sys_prompt_1 = &format!("You are provided with a commit patch by the user {user_name} on the {repo} project. Your task is to parse this data, focusing on the following sections: the Date Line, Subject Line, Diff Files, Diff Changes, Sign-off Line, and the File Changes Summary. Extract key elements such as the date of the commit (in 'yyyy/mm/dd' format), a summary of changes, and the types of files affected, prioritizing code files, scripts, then documentation. Compile a list of the extracted key elements.");
+
+        let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize information on changes in code files, then scripts, and lastly documentation. Please compile your findings into a list, with each key element represented as a separate item.");
+        let chat_id = format!("commit_{:?}", sha[0..7].to_string());
+
+        let co_1 = ChatOptions {
+            model: ChatModel::GPT35Turbo16K,
+            restart: true,
+            system_prompt: Some(sys_prompt_1),
+            max_tokens: Some(256),
+            temperature: Some(0.7),
+            ..Default::default()
+        };
+
+        match openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
+            Ok(res_1) => {
+                send_message_to_channel("ik8", "ch_mid", res_1.choice.clone()).await;
+
+                let system_obj_1 = serde_json::json!(
+                    {"role": "system", "content": sys_prompt_1}
+                );
+
+                let user_obj_1 = serde_json::json!(
+                    {"role": "user", "content": usr_prompt_1}
+                );
+                let assistant_obj = serde_json::json!(
+                    {"role": "assistant", "content": &res_1.choice}
+                );
+                let sys_prompt_2 =
+                    serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
+                let usr_prompt_2 = &format!("Using the key elements extracted from the commit patch, synthesize a summary of the user's contributions to the project. Incorporate the date of the commit, the types of files affected, and the overall changes made. Please provide your summary in this format: On <date in 'yyyy/mm/dd' format>, the user <summary of changes>. The modifications affected <type of files> and their implications are <overall impact of changes>.");
+
+                let co_2 = ChatOptions {
+                    model: ChatModel::GPT35Turbo16K,
+                    restart: false,
+                    system_prompt: Some(&sys_prompt_2),
+                    max_tokens: Some(128),
+                    temperature: Some(0.7),
+                    ..Default::default()
+                };
+                match openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
+                    Ok(res_2) => {
+                        send_message_to_channel("ik8", "ch_out", res_2.choice.clone()).await;
+
+                        if res_2.choice.len() < 10 {
+                            log::error!("failed to create summary on commit");
+                            continue;
+                        }
+                        commit_summaries.push(res_2.choice);
+                    }
+                    Err(_e) => log::error!("Step 2 GPT error {:?}", _e),
+                };
+            }
+            Err(_e) => log::error!("Step 1 GPT error {:?}", _e),
+        }
+    }
+    let commit_summaries = commit_summaries.join("\n");
+
+    Ok(commit_summaries)
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct User {
+    login: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct GithubCommit {
+    sha: String,
+    node_id: String,
+    commit: Commit,
+    url: String,
+    html_url: String,
+    comments_url: String,
+    author: User,
+    committer: User,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Commit {
+    author: Author,
+    committer: Author,
+    message: String,
+    url: String,
+    comment_count: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct Author {
+    name: String,
+    email: String,
+    date: String,
 }
