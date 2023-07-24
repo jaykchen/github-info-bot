@@ -54,7 +54,7 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         let mut output = String::new();
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+                // send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
 
                 if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
                     send_message_to_channel("ik8", "ch_in", body.to_string()).await;
@@ -191,6 +191,9 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
                     let commenter_input = format!("{commenter} commented: {comment_body}");
                     all_text_from_issue.push_str(&commenter_input);
+                    let head = all_text_from_issue.chars().take(100).collect::<String>();
+                    send_message_to_channel("ik8", "ch_mid", head).await;
+
                     if all_text_from_issue.len() > 55_000 {
                         break;
                     }
@@ -220,17 +223,16 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         ..Default::default()
     };
 
-    let system_obj_1 = serde_json::json!(
-        {"role": "system", "content": sys_prompt_1}
-    );
-
-    let user_obj_1 = serde_json::json!(
-        {"role": "user", "content": usr_prompt_1}
-    );
-
     if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
         send_message_to_channel("ik8", "ch_in", res.choice.clone()).await;
 
+        let system_obj_1 = serde_json::json!(
+            {"role": "system", "content": sys_prompt_1}
+        );
+
+        let user_obj_1 = serde_json::json!(
+            {"role": "user", "content": usr_prompt_1}
+        );
         let assistant_obj = serde_json::json!(
             {"role": "assistant", "content": &res.choice}
         );
