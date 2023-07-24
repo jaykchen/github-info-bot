@@ -52,21 +52,19 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     if sm.text.contains(&trigger_word) {
         // let mut issues_summaries = String::new();
         let mut output = String::new();
-        let mut count = 0;
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                count += 1;
-                output = issue.title;
-                // send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+                send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
 
-                // if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
-                //     send_message_to_channel("ik8", "ch_in", body.to_string()).await;
-                //     // issues_summaries.push_str(&body);
-                //     // issues_summaries.push_str("\n");
-                // }
+                if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
+                    send_message_to_channel("ik8", "ch_in", body.to_string()).await;
+                    break;
+                    // issues_summaries.push_str(&body);
+                    // issues_summaries.push_str("\n");
+                }
             }
-            send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}"))
-                .await;
+            // send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}"))
+            //     .await;
         }
     }
 }
@@ -87,11 +85,10 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
 
     let mut out: Vec<Issue> = vec![];
     let mut total_pages = None;
-    for page in 1..29 {
-        if page > total_pages.unwrap_or(28) {
+    for page in 1..=3 {
+        if page > total_pages.unwrap_or(3) {
             break;
         }
-        send_message_to_channel("ik8", "ch_in", page.to_string()).await;
 
         let url_str = format!(
             "https://api.github.com/search/issues?q={encoded_query}&sort=created&order=desc&page={page}"
@@ -109,14 +106,14 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
         {
             Ok(res) => {
                 if !res.status_code().is_success() {
-                    return Err(anyhow::anyhow!("Request to Github API failed."));
+                    continue;
                 };
 
                 let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
 
                 match response {
                     Err(_e) => {
-                        return Err(anyhow::anyhow!("Failed to parse Github API response."));
+                        continue;
                     }
 
                     Ok(search_result) => {
@@ -133,7 +130,7 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
                 }
             }
             Err(_e) => {
-                return Err(anyhow::anyhow!("Failed to send request to Github API."));
+                continue;
             }
         }
     }
@@ -143,16 +140,16 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
     let openai = OpenAIFlows::new();
-
     let octocrab = get_octo(&GithubLogin::Default);
-
     let issues_handle = octocrab.issues(owner, repo);
 
     let issue_creator_name = issue.user.login;
     let issue_number = issue.number;
     let issue_title = issue.title;
-    let issue_body = issue.body.unwrap_or("".to_string());
-    let issue_body = squeeze_fit_comment_texts(&issue_body, "```", 500, 0.6);
+    let issue_body = match issue.body {
+        Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
+        None => "".to_string(),
+    };
     let issue_date = issue.created_at.date_naive().to_string();
     let html_url = issue.html_url.to_string();
 
@@ -164,45 +161,64 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         .join(", ");
 
     let mut all_text_from_issue = format!("User '{issue_creator_name}', has submitted an issue titled '{issue_title}', labeled as '{labels}', with the following post: '{issue_body}'.");
-    match issues_handle
-        .list_comments(issue_number)
-        // .since(chrono::Utc::now())
-        .per_page(100)
-        // .page(2u32)
-        .send()
-        .await
-    {
-        Ok(pages) => {
-            for comment in pages.items {
-                let _body = comment.body.unwrap_or("".to_string());
-                let comment_body = squeeze_fit_comment_texts(&_body, "```", 500, 0.6);
-                let commenter = comment.user.login;
 
-                let commenter_input = format!("{commenter} commented: {comment_body}");
-                all_text_from_issue.push_str(&commenter_input);
-                if all_text_from_issue.len() > 55_000 {
-                    break;
-                }
-            }
+    let mut total_pages = None;
+    for page_number in 1..=3 {
+        if page_number > total_pages.unwrap_or(3) {
+            break;
         }
 
-        Err(_e) => {}
+        match issues_handle
+            .list_comments(issue_number)
+            // .since(chrono::Utc::now())
+            .per_page(30)
+            .page(page_number as u32)
+            .send()
+            .await
+        {
+            Ok(pages) => {
+                if total_pages.is_none() {
+                    if let Some(count) = pages.total_count {
+                        total_pages = Some((count / 30) as usize + 1);
+                    }
+                }
+                for comment in pages.items {
+                    let comment_body = match comment.body {
+                        Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
+                        None => "".to_string(),
+                    };
+                    let commenter = comment.user.login;
+
+                    let commenter_input = format!("{commenter} commented: {comment_body}");
+                    all_text_from_issue.push_str(&commenter_input);
+                    if all_text_from_issue.len() > 55_000 {
+                        break;
+                    }
+                }
+            }
+
+            Err(_e) => continue,
+        }
     }
 
     let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
-
+    let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
     let chat_id = format!("issue_{:?}", issue.id);
+
+    let input_length_check_1 = sys_prompt_1.len() + usr_prompt_1.len() + 1200;
+    let model_1 = match input_length_check_1 > 30_000 {
+        true => ChatModel::GPT35Turbo16K,
+        false => ChatModel::GPT35Turbo,
+    };
     let co_1 = ChatOptions {
-        model: ChatModel::GPT35Turbo16K,
+        model: model_1,
         restart: true,
         system_prompt: Some(sys_prompt_1),
         max_tokens: Some(256),
         temperature: Some(0.7),
         ..Default::default()
     };
-
-    let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
 
     let system_obj_1 = serde_json::json!(
         {"role": "system", "content": sys_prompt_1}
@@ -213,19 +229,23 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
     );
 
     if let Ok(res) = openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
-        send_message_to_channel("ik8", "ch_out", res.choice.clone()).await;
+        send_message_to_channel("ik8", "ch_in", res.choice.clone()).await;
 
         let assistant_obj = serde_json::json!(
             {"role": "assistant", "content": &res.choice}
         );
+        let sys_prompt_2 = serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
         let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, steps taken, discussions, and current status of the issue>. Highlight the role and contribution of '{user}'");
 
-        let sys_prompt_2 = serde_json::json!([system_obj_1, user_obj_1, assistant_obj]);
-        let temp = sys_prompt_2.to_string();
+        let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
+        let model_2 = match input_length_check_2 > 30_000 {
+            true => ChatModel::GPT35Turbo16K,
+            false => ChatModel::GPT35Turbo,
+        };
         let co_2 = ChatOptions {
-            model: ChatModel::GPT35Turbo16K,
-            restart: false,
-            system_prompt: Some(&temp),
+            model: model_2,
+            restart: true,
+            system_prompt: Some(&sys_prompt_2),
             max_tokens: Some(128),
             temperature: Some(0.7),
             ..Default::default()
