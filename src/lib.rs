@@ -361,7 +361,10 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
                 match response {
                     Err(_e) => log::error!("Github response parse error {:?}", _e),
 
-                    Ok(commit) => text = commit,
+                    Ok(commit) => {
+                        send_message_to_channel("ik8", "ch_err", commit.clone()).await;
+                        text = commit;
+                    }
                 }
             }
             Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
