@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
 use github_flows::{
     get_octo, octocrab,
-    octocrab::{models::issues::Issue, Page, Result as OctoResult},
+    octocrab::{models::issues::Issue, Result as OctoResult},
     GithubLogin,
 };
 use http_req::{request::Method, request::Request, uri::Uri};
@@ -51,93 +51,82 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
     let mut out = String::from("placeholder");
     if sm.text.contains(&trigger_word) {
         // let mut issues_summaries = String::new();
-
+      let mut output = String::new();
+      let mut count=    0;
         if let Ok(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
-                send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
+                count +=1;
+                output = issue.title;
+                // send_message_to_channel("ik8", "ch_in", issue.html_url.to_string()).await;
 
                 // if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
                 //     send_message_to_channel("ik8", "ch_in", body.to_string()).await;
-                //     issues_summaries.push_str(&body);
-                //     issues_summaries.push_str("\n");
+                //     // issues_summaries.push_str(&body);
+                //     // issues_summaries.push_str("\n");
                 // }
             }
-            // send_message_to_channel("ik8", "ch_out", issues_summaries).await;
+            send_message_to_channel("ik8", "ch_out", format!("issues_count: {count}   {output}")).await;
         }
     }
 }
-// #[derive(Debug, Deserialize)]
-// struct Page<T> {
-//     pub items: Vec<T>,
-//     pub incomplete_results: Option<bool>,
-//     pub total_count: Option<u64>,
-//     pub next: Option<String>,
-//     pub prev: Option<String>,
-//     pub first: Option<String>,
-//     pub last: Option<String>,
-// }
-// pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
-//     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
-
-//     let query = format!("repo:{}/{} involves:{}", owner, repo, user);
-//     let encoded_query = urlencoding::encode(&query);
-//     let url_str = format!(
-//         "https://api.github.com/search/issues?q={}&sort=created&order=desc",
-//         encoded_query
-//     );
-//     let url = Uri::try_from(url_str.as_str()).unwrap();
-//     let mut writer = Vec::new();
-//     let mut out: Vec<Issue> = vec![];
-
-//     match Request::new(&url)
-//         .method(Method::GET)
-//         .header("User-Agent", "flows-network connector")
-//         .header("Content-Type", "application/vnd.github.v3+json")
-//         .header("Authorization", &format!("token {github_token}")) // add the token to your request
-//         .send(&mut writer)
-//     {
-//         Ok(res) => {
-//             if !res.status_code().is_success() {
-//                 return Err(anyhow::anyhow!("Request to Github API failed."));
-//             };
-
-//             let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
-
-//             match response {
-//                 Err(_e) => {
-//                     return Err(anyhow::anyhow!("Failed to parse Github API response."));
-//                 }
-
-//                 Ok(search_result) => {
-//                     for issue in search_result.items {
-//                         out.push(issue.clone());
-//                     }
-//                 }
-//             }
-//         }
-//         Err(_e) => {
-//             return Err(anyhow::anyhow!("Failed to send request to Github API."));
-//         }
-//     }
-
-//     Ok(out)
-// }
+#[derive(Debug, Deserialize)]
+struct Page<T> {
+    pub items: Vec<T>,
+    pub incomplete_results: Option<bool>,
+    pub total_count: Option<u64>,
+    // pub next: Option<String>,
+    // pub prev: Option<String>,
+    // pub first: Option<String>,
+    // pub last: Option<String>,
+}
 pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
-    let octocrab = get_octo(&GithubLogin::Default);
-
-    let user_issue_search_str = format!("repo:{owner}/{repo} involves:{user}");
-
+    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let query = format!("repo:{}/{} involves:{}", owner, repo, user);
     let encoded_query = urlencoding::encode(&query);
-    let route_str = format!("search/issues?q={encoded_query}&sort=created&order=desc",);
 
-    let page: Page<Issue> = octocrab.get(route_str.as_str(), None::<&()>).await?;
+    let mut out: Vec<Issue> = vec![];
 
-    let mut res = vec![];
-    for issue in page.items {
-        res.push(issue.clone());
+    for page in 1.. {
+        let url_str = format!(
+            "https://api.github.com/search/issues?q={encoded_query}&sort=created&order=desc&page={page}"
+        );
+
+        let url = Uri::try_from(url_str.as_str()).unwrap();
+        let mut writer = Vec::new();
+
+        match Request::new(&url)
+            .method(Method::GET)
+            .header("User-Agent", "flows-network connector")
+            .header("Content-Type", "application/vnd.github.v3+json")
+            .header("Authorization", &format!("token {github_token}")) // add the token to your request
+            .send(&mut writer)
+        {
+            Ok(res) => {
+                if !res.status_code().is_success() {
+                    return Err(anyhow::anyhow!("Request to Github API failed."));
+                };
+
+                let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
+
+                match response {
+                    Err(_e) => {
+                        return Err(anyhow::anyhow!("Failed to parse Github API response."));
+                    }
+
+                    Ok(search_result) => {
+                        for issue in search_result.items {
+                            out.push(issue.clone());
+                        }
+                    }
+                }
+            }
+            Err(_e) => {
+                return Err(anyhow::anyhow!("Failed to send request to Github API."));
+            }
+        }
     }
-    Ok(res)
+
+    Ok(out)
 }
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
