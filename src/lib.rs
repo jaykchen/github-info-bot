@@ -214,11 +214,6 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
     let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
     let chat_id = format!("issue_{issue_number}");
 
-    // let input_length_check_1 = sys_prompt_1.len() + usr_prompt_1.len() + 1200;
-    // let model_1 = match input_length_check_1 > 30_000 {
-    //     true => ChatModel::GPT35Turbo16K,
-    //     false => ChatModel::GPT35Turbo,
-    // };
     let co_1 = ChatOptions {
         model: ChatModel::GPT35Turbo16K,
         restart: true,
@@ -244,13 +239,8 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
             );
             let sys_prompt_2 =
                 serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-            let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, steps taken, discussions, and current status of the issue>. Highlight the role and contribution of '{user}'");
+            let usr_prompt_2 = &format!("Based on the key details listed in the previous step, provide a high-level summary of the issue <Brief summary of the main problem, and current status of the issue>. Highlight the role and contribution of '{user}'");
 
-            // let input_length_check_2 = sys_prompt_2.len() + usr_prompt_2.len() + 1200;
-            // let model_2 = match input_length_check_2 > 30_000 {
-            //     true => ChatModel::GPT35Turbo16K,
-            //     false => ChatModel::GPT35Turbo,
-            // };
             let co_2 = ChatOptions {
                 model: ChatModel::GPT35Turbo16K,
                 restart: false,
