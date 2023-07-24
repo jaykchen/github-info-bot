@@ -190,6 +190,8 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
                 match response {
                     Err(_e) => {
+                        send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+
                         continue;
                     }
 
@@ -217,6 +219,8 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
                 }
             }
             Err(_e) => {
+                send_message_to_channel("ik8", "ch_err", _e.to_string()).await;
+
                 continue;
             }
         }
