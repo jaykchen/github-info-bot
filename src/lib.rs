@@ -1,23 +1,17 @@
-use anyhow::Result;
-use chrono::{DateTime, Duration, NaiveDate, Utc};
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
 use github_flows::{
     get_octo, octocrab,
-    octocrab::{
-        models::issues::{Comment, Issue},
-        Result as OctoResult,
-    },
+    octocrab::models::issues::{Comment, Issue},
     GithubLogin,
 };
 use http_req::{request::Method, request::Request, uri::Uri};
 use log;
 use openai_flows::{
-    chat::{self, ChatMessage, ChatModel, ChatOptions},
+    chat::{ChatModel, ChatOptions},
     OpenAIFlows,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use slack_flows::{listen_to_channel, send_message_to_channel, SlackMessage};
 use std::env;
 use urlencoding;
@@ -53,28 +47,26 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
         _ => panic!("Input should contain 'bot@get <github_owner> <github_repo> <user_name>'"),
     };
 
-    let mut out = String::from("placeholder");
-    let mut commits_summaries = String::new();
-    let mut issues_summaries = String::new();
     if sm.text.contains(&trigger_word) {
         if let Some(res) = analyze_commits(owner, repo, user_name).await {
-            commits_summaries = res.clone();
-            send_message_to_channel("ik8", "ch_out", res.clone()).await;
-        }
-        if let Some(issues) = get_issues(owner, repo, user_name).await {
-            for issue in issues {
-                if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
-                    // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
-                    break;
-                    issues_summaries.push_str(&body);
-                    issues_summaries.push_str("\n");
+            send_message_to_channel("ik8", "ch_in", res.clone()).await;
+            let commits_summaries = res;
+            if let Some(issues) = get_issues(owner, repo, user_name).await {
+                let mut issues_summaries = String::new();
+                for issue in issues {
+                    if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
+                        issues_summaries.push_str(&body);
+                        issues_summaries.push_str("\n");
+                    }
+                }
+                send_message_to_channel("ik8", "ch_mid", issues_summaries.clone()).await;
+
+                if let Some(report) =
+                    correlate_commits_issues(&commits_summaries, &issues_summaries).await
+                {
+                    send_message_to_channel("ik8", "general", report).await;
                 }
             }
-            out = correlate_commits_issues(&commits_summaries, &issues_summaries)
-                .await
-                .unwrap();
-
-            send_message_to_channel("ik8", "general", out.clone()).await;
         }
     }
 }
@@ -90,7 +82,7 @@ struct Page<T> {
 }
 pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue>> {
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
-    let query = format!("repo:{}/{} involves:{}", owner, repo, user);
+    let query = format!("repo:{owner}/{repo} involves:{user}");
     let encoded_query = urlencoding::encode(&query);
 
     let mut out: Vec<Issue> = vec![];
@@ -106,18 +98,15 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue
 
         match github_http_fetch(&github_token, &url_str).await {
             Some(res) => match serde_json::from_slice::<Page<Issue>>(&res) {
-                Err(_e) => {
-                    continue;
-                }
+                Err(_e) => log::error!("Error parsing Page<Issue>: {:?}", _e),
 
-                Ok(search_result) => {
+                Ok(issue_page) => {
                     if total_pages.is_none() {
-                        if let Some(count) = search_result.total_count {
+                        if let Some(count) = issue_page.total_count {
                             total_pages = Some((count / 30) as usize + 1);
                         }
                     }
-
-                    for issue in search_result.items {
+                    for issue in issue_page.items {
                         out.push(issue);
                     }
                 }
