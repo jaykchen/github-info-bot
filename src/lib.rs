@@ -1,10 +1,6 @@
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-use github_flows::{
-    // get_octo, octocrab,
-    octocrab::models::issues::{Comment, Issue},
-    // GithubLogin,
-};
+use github_flows::octocrab::models::issues::{Comment, Issue};
 use http_req::{request::Method, request::Request, uri::Uri};
 use log;
 use openai_flows::{
@@ -73,15 +69,9 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 #[derive(Debug, Deserialize)]
 struct Page<T> {
     pub items: Vec<T>,
-    // pub incomplete_results: Option<bool>,
     pub total_count: Option<u64>,
-    // pub next: Option<String>,
-    // pub prev: Option<String>,
-    // pub first: Option<String>,
-    // pub last: Option<String>,
 }
 pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue>> {
-    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let query = format!("repo:{owner}/{repo} involves:{user}");
     let encoded_query = urlencoding::encode(&query);
 
@@ -96,7 +86,7 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue
             "https://api.github.com/search/issues?q={encoded_query}&sort=created&order=desc&page={page}"
         );
 
-        match github_http_fetch(&github_token, &url_str).await {
+        match github_http_fetch_tokenless(&url_str).await {
             Some(res) => match serde_json::from_slice::<Page<Issue>>(&res) {
                 Err(_e) => log::error!("Error parsing Page<Issue>: {:?}", _e),
 
@@ -120,8 +110,6 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue
 }
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
-    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
-
     let issue_creator_name = issue.user.login;
     let issue_number = issue.number;
     let issue_title = issue.title;
@@ -145,7 +133,7 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments?per_page=100",
     );
 
-    match github_http_fetch(&github_token, &url_str).await {
+    match github_http_fetch_tokenless(&url_str).await {
         Some(res) => match serde_json::from_slice::<Vec<Comment>>(&res) {
             Err(_e) => log::error!("Error parsing Vec<Comment>: {:?}", _e),
             Ok(comments_obj) => {
@@ -250,12 +238,11 @@ pub fn squeeze_fit_comment_texts(
 }
 
 pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> Option<String> {
-    let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let user_commits_repo_str =
         format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
     let mut commits_summaries = String::new();
 
-    match github_http_fetch(&github_token, &user_commits_repo_str).await {
+    match github_http_fetch_tokenless(&user_commits_repo_str).await {
         None => log::error!("Error fetching Page of commits"),
         Some(res) => match serde_json::from_slice::<Vec<GithubCommit>>(&res) {
             Err(_e) => log::error!("Error parsing commits object: {:?}", _e),
@@ -263,7 +250,7 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> Option
                 for sha in commits_obj.into_iter().map(|commit| commit.sha) {
                     let commit_patch_str =
                         format!("https://github.com/{owner}/{repo}/commit/{sha}.patch");
-                    match github_http_fetch(&github_token, &commit_patch_str).await {
+                    match github_http_fetch_tokenless(&commit_patch_str).await {
                         Some(res) => {
                             let text = String::from_utf8_lossy(&res).to_string();
 
@@ -399,32 +386,6 @@ pub async fn chain_of_chat(
     None
 }
 
-pub async fn github_http_fetch(token: &str, url: &str) -> Option<Vec<u8>> {
-    let url = Uri::try_from(url).unwrap();
-    let mut writer = Vec::new();
-
-    match Request::new(&url)
-        .method(Method::GET)
-        .header("User-Agent", "flows-network connector")
-        .header("Content-Type", "application/vnd.github.v3+json")
-        .header("Authorization", &format!("Bearer {token}"))
-        .send(&mut writer)
-    {
-        Ok(res) => {
-            if !res.status_code().is_success() {
-                log::error!("Github http error {:?}", res.status_code());
-                return None;
-            };
-
-            return Some(writer);
-        }
-        Err(_e) => {
-            log::error!("Error getting response from Github: {:?}", _e);
-        }
-    }
-
-    None
-}
 pub async fn github_http_fetch_tokenless(url: &str) -> Option<Vec<u8>> {
     let url = Uri::try_from(url).unwrap();
     let mut writer = Vec::new();
