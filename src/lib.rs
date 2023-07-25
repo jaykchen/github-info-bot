@@ -1,10 +1,6 @@
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
-use github_flows::{
-    // get_octo, octocrab,
-    octocrab::models::issues::{Comment, Issue},
-    // GithubLogin,
-};
+use github_flows::octocrab::models::issues::{Comment, Issue};
 use http_req::{request::Method, request::Request, uri::Uri};
 use log;
 use openai_flows::{
@@ -408,31 +404,6 @@ pub async fn github_http_fetch(token: &str, url: &str) -> Option<Vec<u8>> {
         .header("User-Agent", "flows-network connector")
         .header("Content-Type", "application/vnd.github.v3+json")
         .header("Authorization", &format!("Bearer {token}"))
-        .send(&mut writer)
-    {
-        Ok(res) => {
-            if !res.status_code().is_success() {
-                log::error!("Github http error {:?}", res.status_code());
-                return None;
-            };
-
-            return Some(writer);
-        }
-        Err(_e) => {
-            log::error!("Error getting response from Github: {:?}", _e);
-        }
-    }
-
-    None
-}
-pub async fn github_http_fetch_tokenless(url: &str) -> Option<Vec<u8>> {
-    let url = Uri::try_from(url).unwrap();
-    let mut writer = Vec::new();
-
-    match Request::new(&url)
-        .method(Method::GET)
-        .header("User-Agent", "flows-network connector")
-        .header("Content-Type", "application/vnd.github.v3+json")
         .send(&mut writer)
     {
         Ok(res) => {
