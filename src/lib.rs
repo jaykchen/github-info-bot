@@ -345,8 +345,14 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
         Ok(res) => {
             if !res.status_code().is_success() {
                 log::error!("Github http error getting commits {:?}", res.status_code());
+                return anyhow::Result::Err(anyhow::Error::msg(
+                    "Github http error getting commits",
+                ));
             };
-
+            if writer.is_empty() {
+                log::error!("Empty response from GitHub");
+                return anyhow::Result::Err(anyhow::Error::msg("Empty response from GitHub"));
+            }
             match serde_json::from_slice::<Vec<GithubCommit>>(&writer) {
                 Err(_e) => log::error!("Error parsing commits {:?}", _e),
 
@@ -401,7 +407,8 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
 
         let sys_prompt_1 = &format!("You are provided with a commit patch by the user {user_name} on the {repo} project. Your task is to parse this data, focusing on the following sections: the Date Line, Subject Line, Diff Files, Diff Changes, Sign-off Line, and the File Changes Summary. Extract key elements such as the date of the commit (in 'yyyy/mm/dd' format), a summary of changes, and the types of files affected, prioritizing code files, scripts, then documentation. Compile a list of the extracted key elements.");
 
-        let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize information on changes in code files, then scripts, and lastly documentation. Please compile your findings into a list, with each key element represented as a separate item.");
+        let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize data on changes to code files first, then scripts, and lastly documentation. Please compile your findings into a list, with each key element represented as a separate item.");
+
         let chat_id = "commit-99".to_string();
 
         let co_1 = ChatOptions {
@@ -429,7 +436,7 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
                 );
                 let sys_prompt_2 =
                     serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-                let usr_prompt_2 = &format!("Using the key elements extracted from the commit patch, synthesize a summary of the user's contributions to the project. Incorporate the date of the commit, the types of files affected, and the overall changes made. Please provide your summary in this format: On <date in 'yyyy/mm/dd' format>, the user <summary of changes>. The modifications affected <type of files> and their implications are <overall impact of changes>.");
+                let usr_prompt_2 = &format!("Using the key elements you extracted from the commit patch, provide a summary of the user's contributions to the project. Include the date of the commit, the types of files affected, and the overall changes made. Present your summary in this format: 'On (date in 'yyyy/mm/dd' format), the user made these changes: (summary of changes). The implications are (overall impact of changes).'");
 
                 let co_2 = ChatOptions {
                     model: ChatModel::GPT35Turbo16K,
