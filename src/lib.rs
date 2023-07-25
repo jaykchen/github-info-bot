@@ -104,44 +104,26 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
             "https://api.github.com/search/issues?q={encoded_query}&sort=created&order=desc&page={page}"
         );
 
-        let url = Uri::try_from(url_str.as_str()).unwrap();
-        let mut writer = Vec::new();
-
-        match Request::new(&url)
-            .method(Method::GET)
-            .header("User-Agent", "flows-network connector")
-            .header("Content-Type", "application/vnd.github.v3+json")
-            .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
-            .send(&mut writer)
-        {
-            Ok(res) => {
-                if !res.status_code().is_success() {
+        match github_http_fetch(&github_token, &url_str).await {
+            Some(res) => match serde_json::from_slice::<Page<Issue>>(&res) {
+                Err(_e) => {
                     continue;
-                };
+                }
 
-                let response: Result<Page<Issue>, _> = serde_json::from_slice(&writer);
-
-                match response {
-                    Err(_e) => {
-                        continue;
+                Ok(search_result) => {
+                    if total_pages.is_none() {
+                        if let Some(count) = search_result.total_count {
+                            total_pages = Some((count / 30) as usize + 1);
+                        }
                     }
 
-                    Ok(search_result) => {
-                        if total_pages.is_none() {
-                            if let Some(count) = search_result.total_count {
-                                total_pages = Some((count / 30) as usize + 1);
-                            }
-                        }
-
-                        for issue in search_result.items {
-                            out.push(issue.clone());
-                        }
+                    for issue in search_result.items {
+                        out.push(issue);
                     }
                 }
-            }
-            Err(_e) => {
-                continue;
-            }
+            },
+
+            None => {}
         }
     }
 
@@ -402,7 +384,7 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> Option
 
         let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize data on changes to code files first, then scripts, and lastly documentation. Pay attention to the file types and ensure the distinction between documentation changes and core code changes, even when the documentation contains highly technical language. Please compile your findings into a list, with each key element represented as a separate item.");
 
-        let usr_prompt_2 = &format!("Using the key elements you extracted from the commit patch, provide a summary of the user's contributions to the project. Include the date of the commit, the types of files affected, and the overall changes made. When describing the affected files, make sure to differentiate between changes to core code files, scripts, and documentation files. Present your summary in this format: 'On (date in 'yyyy/mm/dd' format), the user (summary of changes). They (overall impact of changes).'");
+        let usr_prompt_2 = &format!("Using the key elements you extracted from the commit patch, provide a summary of the user's contributions to the project. Include the date of the commit, the types of files affected, and the overall changes made. When describing the affected files, make sure to differentiate between changes to core code files, scripts, and documentation files. Present your summary in this format: 'On (date in 'yyyy/mm/dd' format), (summary of changes). (overall impact of changes).' Please ensure your answer stayed below 256 tokens.");
 
         let sha_serial = sha.chars().take(5).collect::<String>();
         match chain_of_chat(
@@ -517,4 +499,56 @@ pub async fn chain_of_chat(
     }
 
     Some("".to_string())
+}
+
+pub async fn github_http_fetch(token: &str, url: &str) -> Option<Vec<u8>> {
+    let url = Uri::try_from(url).unwrap();
+    let mut writer = Vec::new();
+
+    match Request::new(&url)
+        .method(Method::GET)
+        .header("User-Agent", "flows-network connector")
+        .header("Content-Type", "application/vnd.github.v3+json")
+        .header("Authorization", &format!("Bearer {token}"))
+        .send(&mut writer)
+    {
+        Ok(res) => {
+            if !res.status_code().is_success() {
+                log::error!("Github http error {:?}", res.status_code());
+                return None;
+            };
+
+            return Some(writer);
+        }
+        Err(_e) => {
+            log::error!("Error getting response from Github: {:?}", _e);
+        }
+    }
+
+    None
+}
+pub async fn github_http_fetch_tokenless(url: &str) -> Option<Vec<u8>> {
+    let url = Uri::try_from(url).unwrap();
+    let mut writer = Vec::new();
+
+    match Request::new(&url)
+        .method(Method::GET)
+        .header("User-Agent", "flows-network connector")
+        .header("Content-Type", "application/vnd.github.v3+json")
+        .send(&mut writer)
+    {
+        Ok(res) => {
+            if !res.status_code().is_success() {
+                log::error!("Github http error {:?}", res.status_code());
+                return None;
+            };
+
+            return Some(writer);
+        }
+        Err(_e) => {
+            log::error!("Error getting response from Github: {:?}", _e);
+        }
+    }
+
+    None
 }
