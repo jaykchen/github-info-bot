@@ -331,10 +331,23 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let openai = OpenAIFlows::new();
     let user_commits_repo_str =
-        format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
-    let page: Vec<GithubCommit> = octocrab.get(user_commits_repo_str, None::<&()>).await?;
-    let shas = page.iter().map(|x| x.sha.clone()).collect::<Vec<String>>();
+        format!("repos/{owner}/{repo}/commits?author={user_name}");
+    // let user_commits_repo_str =
+    //     format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
 
+    let mut shas = Vec::<String>::new();
+    let page: Result<Vec<GithubCommit>, _> = octocrab.get(&user_commits_repo_str, None::<&()>).await;
+
+    match page {
+        Ok(page) => shas = page.iter().map(|x| x.sha.clone()).collect::<Vec<String>>(),
+        Err(_e) => {
+            send_message_to_channel("ik8", "ch_err", _e.to_string());
+            log::error!("Github response parse error {:?}", _e);
+        }
+    }
+    if shas.is_empty() {
+        return Ok("".to_string());
+    }
     let mut commit_summaries = Vec::<String>::new();
 
     for sha in shas {
