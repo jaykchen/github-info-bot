@@ -282,12 +282,12 @@ pub fn squeeze_fit_commits_issues(commits: &str, issues: &str, split: f32) -> (S
     let mut issues_vec = issues.split_whitespace().collect::<Vec<&str>>();
     let issues_len = issues_vec.len();
 
-    if commits_len + issues_len > 5500 {
-        let commits_to_take = (5500 as f32 * split) as usize;
+    if commits_len + issues_len > 44_000 {
+        let commits_to_take = (44_000 as f32 * split) as usize;
         match commits_len > commits_to_take {
             true => commits_vec.truncate(commits_to_take),
             false => {
-                let issues_to_take = 5500 - commits_len;
+                let issues_to_take = 44_000 - commits_len;
                 issues_vec.truncate(issues_to_take);
             }
         }
@@ -480,7 +480,6 @@ pub async fn correlate_commits_issues(
     _commits_summary: &str,
     _issues_summary: &str,
 ) -> Option<String> {
-    let openai = OpenAIFlows::new();
     let mut out = String::new();
     let (commits_summary, issues_summary) =
         squeeze_fit_commits_issues(_commits_summary, _issues_summary, 0.6);
@@ -489,64 +488,17 @@ pub async fn correlate_commits_issues(
 
     let usr_prompt_1 = &format!("Given the commit logs: {commits_summary} and issue records: {issues_summary}, analyze and identify the top 1-3 significant contributions made by the user to the project. Your task is to recognize the key areas of impact, be it in the codebase, project documentation, or other aspects, even in the presence of insufficient data or lack of direct correlations. Create a list of these significant contributions without directly replicating phrases from the source data. This list will be used in the next step to construct a detailed narrative of the user's journey in the project.");
 
-    let co_1 = ChatOptions {
-        model: ChatModel::GPT35Turbo16K,
-        restart: true,
-        system_prompt: Some(sys_prompt_1),
-        max_tokens: Some(512),
-        temperature: Some(0.7),
-        ..Default::default()
-    };
+    let usr_prompt_2 = &format!("Using the list of significant contributions identified in the previous step, create a detailed narrative that depicts the user's journey and evolution in the project. Describe the progression of these contributions over time, from their inception to their current status. Highlight the overall impact and significance of these contributions within the project's development. Your narrative should be unique and insightful, capturing the user's influence on the project. Present your findings in a clear, concise, and bullet-point format.");
 
-    match openai
-        .chat_completion("commit-99", usr_prompt_1, &co_1)
-        .await
-    {
-        Ok(res_1) => {
-            send_message_to_channel("ik8", "ch_mid", res_1.choice.clone()).await;
-
-            let system_obj_1 = serde_json::json!(
-                {"role": "system", "content": sys_prompt_1}
-            );
-
-            let user_obj_1 = serde_json::json!(
-                {"role": "user", "content": usr_prompt_1}
-            );
-            let assistant_obj = serde_json::json!(
-                {"role": "assistant", "content": &res_1.choice}
-            );
-            let sys_prompt_2 =
-                serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-            let usr_prompt_2 = &format!("Using the list of significant contributions identified in the previous step, create a detailed narrative that depicts the user's journey and evolution in the project. Describe the progression of these contributions over time, from their inception to their current status. Highlight the overall impact and significance of these contributions within the project's development. Your narrative should be unique and insightful, capturing the user's influence on the project. Present your findings in a clear, concise, and bullet-point format.");
-
-            let co_2 = ChatOptions {
-                model: ChatModel::GPT35Turbo16K,
-                restart: false,
-                system_prompt: Some(&sys_prompt_2),
-                max_tokens: Some(256),
-                temperature: Some(0.7),
-                ..Default::default()
-            };
-            match openai
-                .chat_completion("commit-99", usr_prompt_2, &co_2)
-                .await
-            {
-                Ok(res_2) => {
-                    send_message_to_channel("ik8", "ch_out", res_2.choice.clone()).await;
-
-                    if res_2.choice.len() < 10 {
-                        log::error!("failed to create final report");
-                        return None;
-                    }
-                    return Some(res_2.choice);
-                }
-                Err(_e) => log::error!("Step 2 GPT correlating error {:?}", _e),
-            };
-        }
-        Err(_e) => log::error!("Step 1 GPT correlating error {:?}", _e),
-    }
-
-    Some("".to_string())
+    chain_of_chat(
+        sys_prompt_1,
+        usr_prompt_1,
+        "correlate-99",
+        512,
+        usr_prompt_2,
+        256,
+    )
+    .await
 }
 
 pub async fn chain_of_chat(
@@ -592,10 +544,10 @@ pub async fn chain_of_chat(
                     }
                     return Some(res_2.choice);
                 }
-                Err(_e) => log::error!("Step 2 GPT generation error {:?}", _e),
+                Err(_e) => log::error!("chain_of_chat, Step 2 GPT generation error {:?}", _e),
             };
         }
-        Err(_e) => log::error!("Step 1 GPT generation error {:?}", _e),
+        Err(_e) => log::error!("chain_of_chat, Step 1 GPT generation error {:?}", _e),
     }
 
     Some("".to_string())
