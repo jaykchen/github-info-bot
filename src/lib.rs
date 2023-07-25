@@ -327,24 +327,37 @@ pub fn squeeze_fit_comment_texts(
 }
 
 pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow::Result<String> {
-    let octocrab = get_octo(&GithubLogin::Default);
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let openai = OpenAIFlows::new();
     let user_commits_repo_str =
-        format!("repos/{owner}/{repo}/commits?author={user_name}");
-    // let user_commits_repo_str =
-    //     format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
-
+        format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
+    let uri = Uri::try_from(user_commits_repo_str.as_str()).unwrap();
+    let mut writer = Vec::new();
     let mut shas = Vec::<String>::new();
-    let page: Result<Vec<GithubCommit>, _> = octocrab.get(&user_commits_repo_str, None::<&()>).await;
 
-    match page {
-        Ok(page) => shas = page.iter().map(|x| x.sha.clone()).collect::<Vec<String>>(),
-        Err(_e) => {
-            send_message_to_channel("ik8", "ch_err", _e.to_string());
-            log::error!("Github response parse error {:?}", _e);
+    match Request::new(&uri)
+        .method(Method::GET)
+        .header("User-Agent", "flows-network connector")
+        .header("Content-Type", "application/vnd.github.v3+json")
+        .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
+        .send(&mut writer)
+    {
+        Ok(res) => {
+            if !res.status_code().is_success() {
+                log::error!("Github http error {:?}", res.status_code());
+            };
+
+            match serde_json::from_slice::<Vec<GithubCommit>>(&writer) {
+                Err(_e) => log::error!("Github response parse error {:?}", _e),
+
+                Ok(commits) => {
+                    shas = commits.iter().map(|commit| commit.sha.clone()).collect();
+                }
+            }
         }
+        Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
     }
+
     if shas.is_empty() {
         return Ok("".to_string());
     }
@@ -386,7 +399,7 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
         let sys_prompt_1 = &format!("You are provided with a commit patch by the user {user_name} on the {repo} project. Your task is to parse this data, focusing on the following sections: the Date Line, Subject Line, Diff Files, Diff Changes, Sign-off Line, and the File Changes Summary. Extract key elements such as the date of the commit (in 'yyyy/mm/dd' format), a summary of changes, and the types of files affected, prioritizing code files, scripts, then documentation. Compile a list of the extracted key elements.");
 
         let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize information on changes in code files, then scripts, and lastly documentation. Please compile your findings into a list, with each key element represented as a separate item.");
-        let chat_id = format!("commit_{:?}", sha[0..7].to_string());
+        let chat_id = "commit-99".to_string();
 
         let co_1 = ChatOptions {
             model: ChatModel::GPT35Turbo16K,
