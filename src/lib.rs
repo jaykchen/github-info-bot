@@ -374,6 +374,7 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
 
     for sha in shas {
         let commit_patch_str = format!("https://github.com/{owner}/{repo}/commit/{sha}.patch");
+        send_message_to_channel("ik8", "ch_in", commit_patch_str.clone()).await;
 
         let uri = Uri::try_from(commit_patch_str.as_str()).unwrap();
         let mut writer = Vec::new();
@@ -391,16 +392,9 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
                     log::error!("Github http error {:?}", res.status_code());
                 };
 
-                let response: Result<String, _> = serde_json::from_slice(&writer);
-
-                match response {
-                    Err(_e) => log::error!("Github response parse error {:?}", _e),
-
-                    Ok(commit) => {
-                        send_message_to_channel("ik8", "ch_err", commit.clone()).await;
-                        text = commit;
-                    }
-                }
+                let response = String::from_utf8_lossy(&writer);
+                text = response.to_string();
+                send_message_to_channel("ik8", "ch_err", text.clone()).await;
             }
             Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
         }
