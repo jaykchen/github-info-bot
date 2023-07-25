@@ -61,7 +61,7 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
             commits_summaries = res.clone();
             send_message_to_channel("ik8", "ch_out", res.clone()).await;
         }
-        if let Ok(issues) = get_issues(owner, repo, user_name).await {
+        if let Some(issues) = get_issues(owner, repo, user_name).await {
             for issue in issues {
                 if let Some(body) = analyze_issue(owner, repo, user_name, issue).await {
                     // send_message_to_channel("ik8", "ch_in", body.to_string()).await;
@@ -88,7 +88,7 @@ struct Page<T> {
     // pub first: Option<String>,
     // pub last: Option<String>,
 }
-pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<Vec<Issue>> {
+pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue>> {
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
     let query = format!("repo:{}/{} involves:{}", owner, repo, user);
     let encoded_query = urlencoding::encode(&query);
@@ -127,7 +127,7 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> anyhow::Result<V
         }
     }
 
-    Ok(out)
+    Some(out)
 }
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
@@ -157,46 +157,30 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
         "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments?per_page=100",
     );
 
-    let url = Uri::try_from(url_str.as_str()).unwrap();
-    let mut writer = Vec::new();
+    match github_http_fetch(&github_token, &url_str).await {
+        Some(res) => match serde_json::from_slice::<Vec<Comment>>(&res) {
+            Err(_e) => log::error!("Github response parse error {:?}", _e),
 
-    match Request::new(&url)
-        .method(Method::GET)
-        .header("User-Agent", "flows-network connector")
-        .header("Content-Type", "application/vnd.github.v3+json")
-        .header("Authorization", &format!("Bearer {}", github_token))
-        .send(&mut writer)
-    {
-        Ok(res) => {
-            if !res.status_code().is_success() {
-                log::error!("Github http error {:?}", res.status_code());
-            };
+            Ok(comments) => {
+                for comment in comments {
+                    let comment_body = match comment.body {
+                        Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
+                        None => "".to_string(),
+                    };
+                    let commenter = comment.user.login;
 
-            let response: Result<Vec<Comment>, _> = serde_json::from_slice(&writer);
+                    let commenter_input = format!("{commenter} commented: {comment_body}");
+                    all_text_from_issue.push_str(&commenter_input);
 
-            match response {
-                Err(_e) => log::error!("Github response parse error {:?}", _e),
-
-                Ok(comments) => {
-                    for comment in comments {
-                        let comment_body = match comment.body {
-                            Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
-                            None => "".to_string(),
-                        };
-                        let commenter = comment.user.login;
-
-                        let commenter_input = format!("{commenter} commented: {comment_body}");
-                        all_text_from_issue.push_str(&commenter_input);
-
-                        if all_text_from_issue.len() > 55_000 {
-                            break;
-                        }
+                    if all_text_from_issue.len() > 45_000 {
+                        break;
                     }
                 }
             }
-        }
-        Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
-    }
+        },
+
+        None => {}
+    };
 
     let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
@@ -315,94 +299,58 @@ pub fn squeeze_fit_comment_texts(
 
 pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> Option<String> {
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
-    let openai = OpenAIFlows::new();
     let user_commits_repo_str =
         format!("https://api.github.com/repos/{owner}/{repo}/commits?author={user_name}");
-    let uri = Uri::try_from(user_commits_repo_str.as_str()).unwrap();
-    let mut writer = Vec::new();
-    let mut shas = Vec::<String>::new();
+    let mut commits_summaries = String::new();
 
-    match Request::new(&uri)
-        .method(Method::GET)
-        .header("User-Agent", "flows-network connector")
-        .header("Content-Type", "application/vnd.github.v3+json")
-        .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
-        .send(&mut writer)
-    {
-        Ok(res) => {
-            if !res.status_code().is_success() {
-                log::error!("Github http error getting commits {:?}", res.status_code());
-            };
-            if writer.is_empty() {
-                log::error!("Empty response from GitHub");
-            }
-            match serde_json::from_slice::<Vec<GithubCommit>>(&writer) {
-                Err(_e) => log::error!("Error parsing commits {:?}", _e),
+    match github_http_fetch(&github_token, &user_commits_repo_str).await {
+        None => log::error!("Error fetching Page of commits"),
+        Some(res) => match serde_json::from_slice::<Vec<GithubCommit>>(&res) {
+            Err(_e) => log::error!("Error parsing commits object: {:?}", _e),
+            Ok(commits_obj) => {
+                for sha in commits_obj.into_iter().map(|commit| commit.sha) {
+                    let commit_patch_str =
+                        format!("https://github.com/{owner}/{repo}/commit/{sha}.patch");
+                    match github_http_fetch(&github_token, &commit_patch_str).await {
+                        Some(res) => {
+                            let text = String::from_utf8_lossy(&res).to_string();
 
-                Ok(commits) => {
-                    shas = commits.iter().map(|commit| commit.sha.clone()).collect();
+                            let sys_prompt_1 = &format!("You are provided with a commit patch by the user {user_name} on the {repo} project. Your task is to parse this data, focusing on the following sections: the Date Line, Subject Line, Diff Files, Diff Changes, Sign-off Line, and the File Changes Summary. Extract key elements such as the date of the commit (in 'yyyy/mm/dd' format), a summary of changes, and the types of files affected, prioritizing code files, scripts, then documentation. Be particularly careful to distinguish between changes made to core code files and modifications made to documentation files, even if they contain technical content. Compile a list of the extracted key elements.");
+
+                            let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize data on changes to code files first, then scripts, and lastly documentation. Pay attention to the file types and ensure the distinction between documentation changes and core code changes, even when the documentation contains highly technical language. Please compile your findings into a list, with each key element represented as a separate item.");
+
+                            let usr_prompt_2 = &format!("Using the key elements you extracted from the commit patch, provide a summary of the user's contributions to the project. Include the date of the commit, the types of files affected, and the overall changes made. When describing the affected files, make sure to differentiate between changes to core code files, scripts, and documentation files. Present your summary in this format: 'On (date in 'yyyy/mm/dd' format), (summary of changes). (overall impact of changes).' Please ensure your answer stayed below 128 tokens.");
+
+                            let sha_serial = sha.chars().take(5).collect::<String>();
+                            match chain_of_chat(
+                                sys_prompt_1,
+                                usr_prompt_1,
+                                &format!("commit-{sha_serial}"),
+                                256,
+                                usr_prompt_2,
+                                128,
+                                &format!("analyze_commits-{sha_serial}"),
+                            )
+                            .await
+                            {
+                                Some(res) => {
+                                    commits_summaries.push_str(&res);
+                                    commits_summaries.push('\n');
+                                    if commits_summaries.len() > 45_000 {
+                                        break;
+                                    }
+                                }
+                                None => continue,
+                            }
+                        }
+                        None => continue,
+                    };
                 }
             }
-        }
-        Err(_e) => log::error!(
-            "Error getting GitHub response for request on commits {:?}",
-            _e
-        ),
+        },
     }
 
-    if shas.is_empty() {
-        log::error!("Failed to get commits for user");
-        return None;
-    }
-    let mut commit_summaries = Vec::<String>::new();
-
-    for sha in shas {
-        let commit_patch_str = format!("https://github.com/{owner}/{repo}/commit/{sha}.patch");
-
-        let uri = Uri::try_from(commit_patch_str.as_str()).unwrap();
-        let mut writer = Vec::new();
-
-        let mut text = String::new();
-        match Request::new(&uri)
-            .method(Method::GET)
-            .header("User-Agent", "flows-network connector")
-            .header("Content-Type", "application/vnd.github.v3+json")
-            .header("Authorization", &format!("Bearer {github_token}")) // add the token to your request
-            .send(&mut writer)
-        {
-            Ok(res) => {
-                if !res.status_code().is_success() {
-                    log::error!("Github http error {:?}", res.status_code());
-                };
-
-                text = String::from_utf8_lossy(&writer).to_string();
-            }
-            Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
-        }
-
-        let sys_prompt_1 = &format!("You are provided with a commit patch by the user {user_name} on the {repo} project. Your task is to parse this data, focusing on the following sections: the Date Line, Subject Line, Diff Files, Diff Changes, Sign-off Line, and the File Changes Summary. Extract key elements such as the date of the commit (in 'yyyy/mm/dd' format), a summary of changes, and the types of files affected, prioritizing code files, scripts, then documentation. Be particularly careful to distinguish between changes made to core code files and modifications made to documentation files, even if they contain technical content. Compile a list of the extracted key elements.");
-
-        let usr_prompt_1 = &format!("Based on the provided commit patch: {text}, extract and present the following key elements: the date of the commit (formatted as 'yyyy/mm/dd'), a high-level summary of the changes made, and the types of files affected. Prioritize data on changes to code files first, then scripts, and lastly documentation. Pay attention to the file types and ensure the distinction between documentation changes and core code changes, even when the documentation contains highly technical language. Please compile your findings into a list, with each key element represented as a separate item.");
-
-        let usr_prompt_2 = &format!("Using the key elements you extracted from the commit patch, provide a summary of the user's contributions to the project. Include the date of the commit, the types of files affected, and the overall changes made. When describing the affected files, make sure to differentiate between changes to core code files, scripts, and documentation files. Present your summary in this format: 'On (date in 'yyyy/mm/dd' format), (summary of changes). (overall impact of changes).' Please ensure your answer stayed below 256 tokens.");
-
-        let sha_serial = sha.chars().take(5).collect::<String>();
-        match chain_of_chat(
-            sys_prompt_1,
-            usr_prompt_1,
-            &format!("commit-{sha_serial}"),
-            256,
-            usr_prompt_2,
-            128,
-            &format!("analyze_commits-{sha_serial}"),
-        )
-        .await
-        {
-            Some(res) => commit_summaries.push(res),
-            None => continue,
-        }
-    }
-    Some(commit_summaries.join("\n"))
+    Some(commits_summaries)
 }
 
 #[derive(Debug, Deserialize, Serialize)]
