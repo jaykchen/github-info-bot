@@ -344,22 +344,25 @@ pub async fn analyze_commits(owner: &str, repo: &str, user_name: &str) -> anyhow
     {
         Ok(res) => {
             if !res.status_code().is_success() {
-                log::error!("Github http error {:?}", res.status_code());
+                log::error!("Github http error getting commits {:?}", res.status_code());
             };
 
             match serde_json::from_slice::<Vec<GithubCommit>>(&writer) {
-                Err(_e) => log::error!("Github response parse error {:?}", _e),
+                Err(_e) => log::error!("Error parsing commits {:?}", _e),
 
                 Ok(commits) => {
                     shas = commits.iter().map(|commit| commit.sha.clone()).collect();
                 }
             }
         }
-        Err(_e) => log::error!("Error getting GitHub response {:?}", _e),
+        Err(_e) => log::error!(
+            "Error getting GitHub response for request on commits {:?}",
+            _e
+        ),
     }
 
     if shas.is_empty() {
-        return Ok("".to_string());
+        return anyhow::Result::Err(anyhow::Error::msg("Failed to get commits for user"));
     }
     let mut commit_summaries = Vec::<String>::new();
 
@@ -465,27 +468,7 @@ struct User {
 #[derive(Serialize, Deserialize, Debug)]
 struct GithubCommit {
     sha: String,
-    node_id: String,
-    commit: Commit,
-    url: String,
     html_url: String,
-    comments_url: String,
     author: User,
     committer: User,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Commit {
-    author: Author,
-    committer: Author,
-    message: String,
-    url: String,
-    comment_count: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct Author {
-    name: String,
-    email: String,
-    date: String,
 }
