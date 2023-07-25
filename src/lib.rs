@@ -1,9 +1,9 @@
 use dotenv::dotenv;
 use flowsnet_platform_sdk::logger;
 use github_flows::{
-    get_octo, octocrab,
+    // get_octo, octocrab,
     octocrab::models::issues::{Comment, Issue},
-    GithubLogin,
+    // GithubLogin,
 };
 use http_req::{request::Method, request::Request, uri::Uri};
 use log;
@@ -64,7 +64,7 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
                 if let Some(report) =
                     correlate_commits_issues(&commits_summaries, &issues_summaries).await
                 {
-                    send_message_to_channel("ik8", "general", report).await;
+                    send_message_to_channel(workspace, channel, report).await;
                 }
             }
         }
@@ -73,7 +73,7 @@ async fn handler(workspace: &str, channel: &str, sm: SlackMessage) {
 #[derive(Debug, Deserialize)]
 struct Page<T> {
     pub items: Vec<T>,
-    pub incomplete_results: Option<bool>,
+    // pub incomplete_results: Option<bool>,
     pub total_count: Option<u64>,
     // pub next: Option<String>,
     // pub prev: Option<String>,
@@ -120,7 +120,6 @@ pub async fn get_issues(owner: &str, repo: &str, user: &str) -> Option<Vec<Issue
 }
 
 pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) -> Option<String> {
-    let openai = OpenAIFlows::new();
     let github_token = env::var("github_token").unwrap_or("fake-token".to_string());
 
     let issue_creator_name = issue.user.login;
@@ -148,16 +147,14 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
 
     match github_http_fetch(&github_token, &url_str).await {
         Some(res) => match serde_json::from_slice::<Vec<Comment>>(&res) {
-            Err(_e) => log::error!("Github response parse error {:?}", _e),
-
-            Ok(comments) => {
-                for comment in comments {
+            Err(_e) => log::error!("Error parsing Vec<Comment>: {:?}", _e),
+            Ok(comments_obj) => {
+                for comment in comments_obj {
                     let comment_body = match comment.body {
                         Some(body) => squeeze_fit_comment_texts(&body, "```", 500, 0.6),
                         None => "".to_string(),
                     };
                     let commenter = comment.user.login;
-
                     let commenter_input = format!("{commenter} commented: {comment_body}");
                     all_text_from_issue.push_str(&commenter_input);
 
@@ -167,68 +164,34 @@ pub async fn analyze_issue(owner: &str, repo: &str, user: &str, issue: Issue) ->
                 }
             }
         },
-
         None => {}
     };
 
-    let mut out = issue_date;
     let sys_prompt_1 = &format!("Given the information that user '{issue_creator_name}' opened an issue titled '{issue_title}', labelled as '{labels}', your task is to analyze the content of the issue posts. Extract key details including the main problem or question raised, the environment in which the issue occurred, any steps taken by the user to address the problem, relevant discussions, and any identified solutions or pending tasks.");
     let usr_prompt_1 = &format!("Based on the GitHub issue posts: {all_text_from_issue}, please list the following key details: The main problem or question raised in the issue. The environment or conditions in which the issue occurred (e.g., hardware, OS). Any steps or actions taken by the user '{user}' or others to address the issue. Key discussions or points of view shared by participants in the issue thread. Any solutions identified, or pending tasks if the issue hasn't been resolved. The role and contribution of the user '{user}' in the issue.");
-    let chat_id = format!("issue_{issue_number}");
+    let usr_prompt_2 = &format!("Provide a brief summary highlighting the core problem and emphasize the overarching contribution made by '{user}' to the resolution of this issue, ensuring your response stays under 128 tokens.");
 
-    let co_1 = ChatOptions {
-        model: ChatModel::GPT35Turbo16K,
-        restart: true,
-        system_prompt: Some(sys_prompt_1),
-        max_tokens: Some(256),
-        temperature: Some(0.7),
-        ..Default::default()
-    };
-
-    match openai.chat_completion(&chat_id, usr_prompt_1, &co_1).await {
-        Ok(res_1) => {
-            let system_obj_1 = serde_json::json!(
-                {"role": "system", "content": sys_prompt_1}
-            );
-
-            let user_obj_1 = serde_json::json!(
-                {"role": "user", "content": usr_prompt_1}
-            );
-            let assistant_obj = serde_json::json!(
-                {"role": "assistant", "content": &res_1.choice}
-            );
-            let sys_prompt_2 =
-                serde_json::json!([system_obj_1, user_obj_1, assistant_obj]).to_string();
-            let usr_prompt_2 = &format!("Provide a brief summary highlighting the core problem and emphasize the overarching contribution made by '{user}' to the resolution of this issue, ensuring your response stays under 128 tokens.");
-
-            let co_2 = ChatOptions {
-                model: ChatModel::GPT35Turbo16K,
-                restart: false,
-                system_prompt: Some(&sys_prompt_2),
-                max_tokens: Some(128),
-                temperature: Some(0.7),
-                ..Default::default()
-            };
-            match openai.chat_completion(&chat_id, usr_prompt_2, &co_2).await {
-                Ok(res_2) => {
-                    send_message_to_channel("ik8", "ch_mid", res_2.choice.clone()).await;
-
-                    if res_2.choice.len() < 10 {
-                        return None;
-                    }
-                    out.push(' ');
-                    out.push_str(&html_url);
-                    out.push(' ');
-                    out.push_str(&res_2.choice);
-                    println!("{:?}", out);
-                }
-                Err(_e) => log::error!("Step 2 GPT error {:?}", _e),
-            };
+    match chain_of_chat(
+        sys_prompt_1,
+        usr_prompt_1,
+        &format!("issue_{issue_number}"),
+        256,
+        usr_prompt_2,
+        128,
+        &format!("Error generatng issue summary #{issue_number}"),
+    )
+    .await
+    {
+        Some(issue_summary) => {
+            let mut out = html_url.to_string();
+            out.push(' ');
+            out.push_str(&issue_summary);
+            return Some(out);
         }
-        Err(_e) => log::error!("Step 1 GPT error {:?}", _e),
+        None => {}
     }
 
-    Some(out)
+    None
 }
 
 pub fn squeeze_fit_commits_issues(commits: &str, issues: &str, split: f32) -> (String, String) {
@@ -359,7 +322,6 @@ pub async fn correlate_commits_issues(
     _commits_summary: &str,
     _issues_summary: &str,
 ) -> Option<String> {
-    let mut out = String::new();
     let (commits_summary, issues_summary) =
         squeeze_fit_commits_issues(_commits_summary, _issues_summary, 0.6);
 
@@ -376,7 +338,7 @@ pub async fn correlate_commits_issues(
         512,
         usr_prompt_2,
         256,
-        "chain_of_chat",
+        "correlate_commits_issues",
     )
     .await
 }
@@ -391,7 +353,6 @@ pub async fn chain_of_chat(
     error_tag: &str,
 ) -> Option<String> {
     let openai = OpenAIFlows::new();
-    let mut out = String::new();
 
     let co_1 = ChatOptions {
         model: ChatModel::GPT35Turbo16K,
@@ -435,7 +396,7 @@ pub async fn chain_of_chat(
         Err(_e) => log::error!("{}, Step 1 GPT generation error {:?}", error_tag, _e),
     }
 
-    Some("".to_string())
+    None
 }
 
 pub async fn github_http_fetch(token: &str, url: &str) -> Option<Vec<u8>> {
